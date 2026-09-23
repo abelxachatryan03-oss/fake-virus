@@ -1,0 +1,29 @@
+name: Build JokeVirus
+
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup MSVC
+        uses: ilammy/msvc-dev-cmd@v1
+
+      - name: Compile
+        shell: cmd
+        run: |
+          cl /nologo /O2 /MT /EHsc /DNDEBUG /DWIN32_LEAN_AND_MEAN ^
+             /Fe:jokevirus.exe src\main.cpp ^
+             /link /SUBSYSTEM:WINDOWS /ENTRY:mainCRTStartup ^
+             user32.lib gdi32.lib
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: jokevirus
+          path: jokevirus.exe
