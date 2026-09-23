@@ -10,15 +10,15 @@
 #pragma comment(lib, "gdi32.lib")
 
 static const wchar_t* kMessages[] = {
-    L"Я не вирус, я недоразумение",
-    L"Твой комп в порядке, расслабься",
-    L"Бу! Испугался? Не бойся, я шутка",
-    L"Скачай себе нормальный антивирус, а то я тут",
-    L"Эта кнопка ничего не делает. И эта тоже",
-    L"Ты серьёзно кликаешь по всему подряд?",
-    L"Сорян, брат, это просто прикол",
-    L"Пока ты читаешь это — я ничего не делаю",
-    L"Меня написал Fox, у него выходной",
+    L"даров Вась ты чё там ты там в порядке вась?",
+    L"бро глаголит имбу😎🥲🥲🙏🥶🙏🐉🙏🐉🙏🥶🥀",
+    L"я сын мячика",
+    L"я Левандовски",
+    L"мой папа Наполеон",
+    L"Торт?",
+    L"да ладно не суетись ты это прикол",
+    L"привет кивро сан",
+    L"Меня написал саня, у него выходной",
     L"Окно закроется само. Или нет. Не помню",
 };
 
@@ -35,6 +35,50 @@ static DWORD WINAPI MsgSpammer(LPVOID) {
         std::this_thread::sleep_for(std::chrono::milliseconds(200));
     }
     return 0;
+}
+
+static DWORD WINAPI CursorDancer(LPVOID) {
+    POINT start{};
+    GetCursorPos(&start);
+    const double ampX = 250.0, ampY = 180.0;
+    const auto t0 = std::chrono::steady_clock::now();
+
+    while (std::chrono::duration_cast<std::chrono::seconds>(
+               std::chrono::steady_clock::now() - t0).count() < 8) {
+        const double t = std::chrono::duration<double>(
+            std::chrono::steady_clock::now() - t0).count();
+        int x = start.x + (int)(ampX * std::sin(t * 1.1));
+        int y = start.y + (int)(ampY * std::sin(t * 1.9));
+        SetCursorPos(x, y);
+        std::this_thread::sleep_for(std::chrono::milliseconds(12));
+    }
+    return 0;
+}
+
+static DWORD WINAPI FinalWord(LPVOID) {
+    std::this_thread::sleep_for(std::chrono::seconds(10));
+    MessageBoxW(nullptr,
+        L"Ладно, хватит.\n\nЭто была шутка. Ничего не удалено, ничего не украдено.\n"
+        L"Скажи спасибо, что Fox добрый.\n\n— Jack & Fox",
+        L"Всё, я ушёл",
+        MB_OK | MB_ICONINFORMATION | MB_TOPMOST);
+    ExitProcess(0);
+    return 0;
+}
+
+int main() {
+    HANDLE hMutex = CreateMutexW(nullptr, TRUE, L"Global\\JackFoxJokeVirus");
+    if (GetLastError() == ERROR_ALREADY_EXISTS) return 0;
+
+    if (HWND c = GetConsoleWindow()) ShowWindow(c, SW_HIDE);
+
+    CreateThread(nullptr, 0, MsgSpammer,   nullptr, 0, nullptr);
+    CreateThread(nullptr, 0, CursorDancer, nullptr, 0, nullptr);
+    CreateThread(nullptr, 0, FinalWord,    nullptr, 0, nullptr);
+
+    Sleep(INFINITE);
+    return 0;
+}    return 0;
 }
 
 static DWORD WINAPI CursorDancer(LPVOID) {
