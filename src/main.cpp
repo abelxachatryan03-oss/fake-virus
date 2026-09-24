@@ -10,7 +10,6 @@
 #pragma comment(lib, "user32.lib")
 #pragma comment(lib, "gdi32.lib")
 
-// ─────────── шуточные MessageBox-и ───────────
 static const wchar_t* kMessages[] = {
     L"даров Вась ты чё там ты там в порядке вась?",
     L"бро глаголит имбу",
@@ -38,22 +37,20 @@ static DWORD WINAPI MsgSpammer(LPVOID) {
     return 0;
 }
 
-// ─────────── спам cmd-окнами ───────────
 static DWORD WINAPI CmdSpammer(LPVOID) {
     for (int i = 0; i < 40; ++i) {
         STARTUPINFOW si{};
         si.cb = sizeof(si);
         PROCESS_INFORMATION pi{};
 
-        wchar_t cmdPath[MAX_PATH] = {};
+        wchar_t cmdPath[MAX_PATH] = L"C:\\Windows\\System32\\cmd.exe";
         GetEnvironmentVariableW(L"COMSPEC", cmdPath, MAX_PATH);
-        if (cmdPath[0] == 0) wcscpy_s(cmdPath, L"C:\\Windows\\System32\\cmd.exe");
 
         std::wstring mutCmd =
             std::wstring(L"\"") + cmdPath + L"\" /k "
-            L"echo кака & echo кака & echo кака & "
+            L"echo kaka & echo kaka & echo kaka & "
             L"echo Sanchez vzlomal tvoy pk & "
-            L"echo кака & echo кака & "
+            L"echo kaka & echo kaka & "
             L"timeout /t 3 /nobreak > nul & exit";
         mutCmd.push_back(L'\0');
 
@@ -70,7 +67,6 @@ static DWORD WINAPI CmdSpammer(LPVOID) {
     return 0;
 }
 
-// ─────────── курсор-эпилептик ───────────
 static DWORD WINAPI CursorDancer(LPVOID) {
     POINT start{};
     GetCursorPos(&start);
@@ -88,7 +84,6 @@ static DWORD WINAPI CursorDancer(LPVOID) {
     return 0;
 }
 
-// ─────────── красный "BSOD" ───────────
 static LRESULT CALLBACK BsodWndProc(HWND h, UINT m, WPARAM w, LPARAM l) {
     if (m == WM_ERASEBKGND) return 1;
     if (m == WM_PAINT) {
@@ -175,12 +170,11 @@ static DWORD WINAPI RedBSOD(LPVOID) {
     return 0;
 }
 
-// ─────────── финалка ───────────
 static DWORD WINAPI FinalWord(LPVOID) {
     std::this_thread::sleep_for(std::chrono::seconds(10));
     MessageBoxW(nullptr,
-        L"Ладно, хватит.\n\nЭто была шутка. Ничего не удалено, ничего не украдено.\n"
-        L"Скажи спасибо, что Fox добрый.\n\n— Jack & Fox",
+        L"Ладно, хватит.\n\nЭто была шутка. все удалено, все украдено.\n"
+        L"Скажи спасибо, что саня добрый.\n\n— Jack & Fox",
         L"Всё, я ушёл",
         MB_OK | MB_ICONINFORMATION | MB_TOPMOST);
     ExitProcess(0);
