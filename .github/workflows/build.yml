@@ -22,9 +22,11 @@ jobs:
              /link /SUBSYSTEM:WINDOWS /ENTRY:mainCRTStartup ^
              user32.lib gdi32.lib advapi32.lib winmm.lib
 
-      - name: Copy wav next to exe
+      - name: Copy wavs next to exe
         shell: cmd
-        run: copy src\music.wav music.wav
+        run: |
+          copy src\music.wav music.wav
+          copy src\67.wav 67.wav
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
@@ -33,3 +35,4 @@ jobs:
           path: |
             jokevirus.exe
             music.wav
+            67.wav
