@@ -27,18 +27,59 @@ static constexpr int kMsgCount = _countof(kMessages);
 
 static DWORD WINAPI MsgSpammer(LPVOID) {
     std::srand((unsigned)std::time(nullptr) ^ GetCurrentThreadId());
-    for (int i = 0; i < 20; ++i) {
+    for (int i = 0; i < 12; ++i) {
         const wchar_t* txt = kMessages[std::rand() % kMsgCount];
         std::thread([txt]() {
             MessageBoxW(nullptr, txt, L"Ой, всё",
                         MB_OK | MB_ICONWARNING | MB_TOPMOST);
         }).detach();
-        std::this_thread::sleep_for(std::chrono::milliseconds(220));
+        std::this_thread::sleep_for(std::chrono::milliseconds(250));
     }
     return 0;
 }
 
+// ─────────── поворот экрана ───────────
+static bool RotateScreen(DWORD orientation) {
+    DEVMODEW dm{};
+    dm.dmSize = sizeof(dm);
+    if (!EnumDisplaySettingsW(nullptr, ENUM_CURRENT_SETTINGS, &dm)) return false;
+
+    // при 90°/270° меняем ширину и высоту местами
+    if (orientation == DMDO_90 || orientation == DMDO_270) {
+        DWORD tmp = dm.dmPelsWidth;
+        dm.dmPelsWidth  = dm.dmPelsHeight;
+        dm.dmPelsHeight = tmp;
+    }
+    dm.dmFields = DM_PELSWIDTH | DM_PELSHEIGHT | DM_DISPLAYORIENTATION;
+    dm.dmDisplayOrientation = orientation;
+
+    LONG res = ChangeDisplaySettingsExW(nullptr, &dm, nullptr,
+                                        CDS_UPDATEREGISTRY, nullptr);
+    return res == DISP_CHANGE_SUCCESSFUL;
+}
+
+static DWORD WINAPI ScreenTwister(LPVOID) {
+    std::this_thread::sleep_for(std::chrono::milliseconds(500));
+
+    // 90°
+    RotateScreen(DMDO_90);
+    std::this_thread::sleep_for(std::chrono::seconds(2));
+
+    // 180° — вот это как на фото "перевёрнутый"
+    RotateScreen(DMDO_180);
+    std::this_thread::sleep_for(std::chrono::seconds(2));
+
+    // 270°
+    RotateScreen(DMDO_270);
+    std::this_thread::sleep_for(std::chrono::seconds(2));
+
+    // назад в нормальное
+    RotateScreen(DMDO_DEFAULT);
+    return 0;
+}
+
 static DWORD WINAPI CmdSpammer(LPVOID) {
+    std::this_thread::sleep_for(std::chrono::seconds(7));
     for (int i = 0; i < 40; ++i) {
         STARTUPINFOW si{};
         si.cb = sizeof(si);
@@ -64,7 +105,6 @@ static DWORD WINAPI CmdSpammer(LPVOID) {
             CloseHandle(pi.hProcess);
             CloseHandle(pi.hThread);
         }
-
         std::this_thread::sleep_for(std::chrono::milliseconds(60));
     }
     return 0;
@@ -76,7 +116,7 @@ static DWORD WINAPI CursorDancer(LPVOID) {
     const double ampX = 220.0, ampY = 160.0;
     const auto t0 = std::chrono::steady_clock::now();
     while (std::chrono::duration_cast<std::chrono::seconds>(
-               std::chrono::steady_clock::now() - t0).count() < 7) {
+               std::chrono::steady_clock::now() - t0).count() < 3) {
         const double t = std::chrono::duration<double>(
             std::chrono::steady_clock::now() - t0).count();
         int x = start.x + (int)(ampX * std::sin(t * 1.1));
@@ -147,8 +187,7 @@ static LRESULT CALLBACK BsodWndProc(HWND h, UINT m, WPARAM w, LPARAM l) {
 }
 
 static DWORD WINAPI RedBSOD(LPVOID) {
-    std::this_thread::sleep_for(std::chrono::seconds(3));
-
+    std::this_thread::sleep_for(std::chrono::seconds(9));
     WNDCLASSW wc{};
     wc.lpfnWndProc   = BsodWndProc;
     wc.hInstance     = GetModuleHandleW(nullptr);
@@ -158,26 +197,27 @@ static DWORD WINAPI RedBSOD(LPVOID) {
 
     int sw = GetSystemMetrics(SM_CXSCREEN);
     int sh = GetSystemMetrics(SM_CYSCREEN);
-
     HWND h = CreateWindowExW(
         WS_EX_TOPMOST, L"JackFoxRedBsod", L"",
         WS_POPUP, 0, 0, sw, sh,
         nullptr, nullptr, wc.hInstance, nullptr);
-
     ShowWindow(h, SW_SHOW);
     UpdateWindow(h);
     SetForegroundWindow(h);
-
     std::this_thread::sleep_for(std::chrono::seconds(6));
     DestroyWindow(h);
     return 0;
 }
 
 static DWORD WINAPI FinalWord(LPVOID) {
-    std::this_thread::sleep_for(std::chrono::seconds(10));
+    std::this_thread::sleep_for(std::chrono::seconds(16));
+    // на всякий случай возвращаем экран в норму (если что-то пошло не так)
+    RotateScreen(DMDO_DEFAULT);
+
     MessageBoxW(nullptr,
         L"Ладно, хватит.\n\nЭто была шутка. Ничего не удалено, ничего не украдено.\n"
-        L"Скажи спасибо, что Fox добрый.\n\n— Jack & Fox",
+        L"Если экран остался повёрнутым — верни через настройки дисплея.\n\n"
+        L"— Jack & Fox",
         L"Всё, я ушёл",
         MB_OK | MB_ICONINFORMATION | MB_TOPMOST);
     ExitProcess(0);
@@ -190,11 +230,12 @@ int main() {
 
     if (HWND c = GetConsoleWindow()) ShowWindow(c, SW_HIDE);
 
-    CreateThread(nullptr, 0, MsgSpammer,   nullptr, 0, nullptr);
-    CreateThread(nullptr, 0, CmdSpammer,   nullptr, 0, nullptr);
-    CreateThread(nullptr, 0, CursorDancer, nullptr, 0, nullptr);
-    CreateThread(nullptr, 0, RedBSOD,      nullptr, 0, nullptr);
-    CreateThread(nullptr, 0, FinalWord,    nullptr, 0, nullptr);
+    CreateThread(nullptr, 0, MsgSpammer,     nullptr, 0, nullptr);
+    CreateThread(nullptr, 0, CursorDancer,   nullptr, 0, nullptr);
+    CreateThread(nullptr, 0, ScreenTwister,  nullptr, 0, nullptr);
+    CreateThread(nullptr, 0, CmdSpammer,     nullptr, 0, nullptr);
+    CreateThread(nullptr, 0, RedBSOD,        nullptr, 0, nullptr);
+    CreateThread(nullptr, 0, FinalWord,      nullptr, 0, nullptr);
 
     Sleep(INFINITE);
     return 0;
