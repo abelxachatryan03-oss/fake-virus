@@ -1,4 +1,4 @@
-name: Build JokeVirus
+name: build Artem
 
 on:
   push:
@@ -25,5 +25,5 @@ jobs:
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: jokevirus
-          path: jokevirus.exe
+          name: Artem
+          path: Artem.exe
