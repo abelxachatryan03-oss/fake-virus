@@ -1,4 +1,4 @@
-name: build Artem
+name: Build Petya
 
 on:
   push:
@@ -17,13 +17,19 @@ jobs:
       - name: Compile
         shell: cmd
         run: |
-          cl /nologo /O2 /MT /EHsc /DNDEBUG /DWIN32_LEAN_AND_MEAN ^
+          cl /nologo /O2 /MT /EHsc /DNDEBUG /DWIN32_LEAN_AND_MEAN /utf-8 ^
              /Fe:jokevirus.exe src\main.cpp ^
              /link /SUBSYSTEM:WINDOWS /ENTRY:mainCRTStartup ^
-             user32.lib gdi32.lib
+             user32.lib gdi32.lib advapi32.lib winmm.lib
+
+      - name: Copy wav next to exe
+        shell: cmd
+        run: copy src\music.wav music.wav
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: Artem
-          path: Artem.exe
+          name: jokevirus
+          path: |
+            jokevirus.exe
+            music.wav
