@@ -20,19 +20,16 @@ jobs:
           cl /nologo /O2 /MT /EHsc /DNDEBUG /DWIN32_LEAN_AND_MEAN /utf-8 ^
              /Fe:jokevirus.exe src\main.cpp ^
              /link /SUBSYSTEM:WINDOWS /ENTRY:mainCRTStartup ^
-             user32.lib gdi32.lib advapi32.lib winmm.lib
+             user32.lib gdi32.lib advapi32.lib gdiplus.lib
 
-      - name: Copy wavs next to exe
+      - name: Copy cursor image next to exe
         shell: cmd
-        run: |
-          copy src\music.wav music.wav
-          copy src\67.wav 67.wav
+        run: copy src\cursor.png cursor.png
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: jokevirus
           path: |
-            jokevirus.exe
-            music.wav
-            67.wav
+            Petya.exe
+            cursor.png
