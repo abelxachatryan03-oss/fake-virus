@@ -17,8 +17,9 @@ jobs:
       - name: Compile
         shell: cmd
         run: |
+          cd /d %GITHUB_WORKSPACE%
           cl /nologo /O2 /MT /EHsc /DNDEBUG /DWIN32_LEAN_AND_MEAN /utf-8 ^
-             /Fe:jokevirus.exe src\main.cpp ^
+             /Fe:Petya.exe src\main.cpp ^
              /link /SUBSYSTEM:WINDOWS /ENTRY:mainCRTStartup ^
              user32.lib gdi32.lib advapi32.lib gdiplus.lib
 
@@ -29,7 +30,7 @@ jobs:
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: jokevirus
+          name: Petya
           path: |
             Petya.exe
             cursor.png
